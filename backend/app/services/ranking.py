@@ -39,8 +39,12 @@ def passes_hard_filters(hike: HikeResult, criteria: SearchRequest) -> bool:
     if criteria.canton and hike.canton and hike.canton.lower() != criteria.canton.lower():
         return False
 
-    if hike.travel_time_h is None or hike.travel_time_h > criteria.max_travel_time_h:
-        return False
+    # NOTE: max_travel_time_h is intentionally NOT a hard filter here — see
+    # `score()` below, where travel time still counts against ranking, just
+    # not as an exclusion. This was relaxed at the user's request while
+    # getting Routes API set up (§4.3 in task.md does call for a hard
+    # "reachable within max travel time" filter — re-add it here, mirroring
+    # the difficulty/duration checks above, once that's back in scope).
 
     return True
 

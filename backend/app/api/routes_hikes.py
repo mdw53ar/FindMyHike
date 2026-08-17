@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
 from app.aggregator import gather_candidates
 from app.models import CablewayAccess, HikeResult, SearchRequest, SearchResponse
@@ -24,12 +24,26 @@ async def search_hikes(request: SearchRequest) -> SearchResponse:
         cached.cached = True
         return cached
 
+    # Geocoding the start address is best-effort, not required: without a
+    # working GOOGLE_MAPS_API_KEY (or a transient failure), origin stays
+    # None and hikes are still returned — just without travel time,
+    # weather, or trailhead-access info, all of which depend on knowing a
+    # location. This mirrors the same "external integration is optional,
+    # source data is not" principle already applied to the travel-time cap
+    # in services/ranking.py.
+    origin: tuple[float, float] | None = None
+    warnings: list[str] = []
     try:
         origin = await geocode_address(request.start_address)
     except GeocodingError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        warnings.append(
+            f"Could not determine your location ({exc}); showing hikes without "
+            "travel time, weather, or trailhead-access info."
+        )
+        logger.info("Geocoding origin failed: %s", exc)
 
-    raw_hikes, warnings = await gather_candidates(request)
+    raw_hikes, source_warnings = await gather_candidates(request)
+    warnings.extend(source_warnings)
 
     results: list[HikeResult] = []
     for raw in raw_hikes:
@@ -44,30 +58,41 @@ async def search_hikes(request: SearchRequest) -> SearchResponse:
 
 
 async def _enrich(
-    raw: RawHike, origin: tuple[float, float], request: SearchRequest
+    raw: RawHike, origin: tuple[float, float] | None, request: SearchRequest
 ) -> HikeResult | None:
     trailhead = raw.trailhead_latlng
-    if trailhead is None:
+    if trailhead is None and origin is not None:
         geocode_query = raw.trailhead_hint or f"{raw.name}, Switzerland"
         try:
             trailhead = await geocode_address(geocode_query)
         except GeocodingError:
+            # Unlike a missing/broken Maps integration overall (handled by
+            # `origin is None` below), a working integration that still
+            # can't place *this specific* hike is a real data-quality
+            # signal — worth excluding, not just degrading.
             logger.info(
                 "Skipping %r: could not determine trailhead coordinates", raw.name
             )
             return None
 
-    travel = await travel_time(origin, trailhead, request.mode)
-    travel_time_h = travel.duration_h if travel else None
-    reachable_directly = travel.reachable_directly if travel else True
+    travel_time_h: float | None = None
+    reachable_directly = True
+    weather_days: list = []
+
+    if origin is not None and trailhead is not None:
+        travel = await travel_time(origin, trailhead, request.mode)
+        travel_time_h = travel.duration_h if travel else None
+        reachable_directly = travel.reachable_directly if travel else True
+        weather_days = await forecast(trailhead[0], trailhead[1])
 
     cableway: CablewayAccess | None = None
-    trailhead_access = f"reachable by {request.mode.value.replace('_', ' ')}"
     if not reachable_directly or detect_cableway_mention(raw.raw_text):
         cableway = lookup_cableway(raw.name if not reachable_directly else None)
         trailhead_access = "requires cable car"
-
-    weather_days = await forecast(trailhead[0], trailhead[1])
+    elif origin is None:
+        trailhead_access = "unknown (location unavailable)"
+    else:
+        trailhead_access = f"reachable by {request.mode.value.replace('_', ' ')}"
 
     return HikeResult(
         name=raw.name,

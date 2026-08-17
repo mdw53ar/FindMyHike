@@ -9,6 +9,9 @@ function formatHours(h: number | null): string {
 }
 
 function CablewayCell({ hike }: { hike: HikeResult }) {
+  if (hike.trailhead_access.startsWith("unknown")) {
+    return <span className="text-slate-400">unknown</span>;
+  }
   if (hike.trailhead_access !== "requires cable car" || !hike.cableway) {
     return <span className="text-slate-500">reachable directly</span>;
   }

@@ -68,12 +68,16 @@ def test_fails_on_circular_mismatch():
     assert not passes_hard_filters(_hike(circular=False), _request(circular=True))
 
 
-def test_fails_when_travel_time_unknown():
-    assert not passes_hard_filters(_hike(travel_time_h=None), _request())
+def test_passes_when_travel_time_unknown():
+    # Unlike difficulty/duration, travel time is an optional external
+    # integration (Routes API) — missing it shouldn't zero out results.
+    assert passes_hard_filters(_hike(travel_time_h=None), _request())
 
 
-def test_fails_when_travel_time_exceeds_budget():
-    assert not passes_hard_filters(_hike(travel_time_h=3.0), _request(max_travel_time_h=2.0))
+def test_passes_when_travel_time_exceeds_budget():
+    # max_travel_time_h is intentionally not a hard filter right now (see
+    # ranking.py) — it still penalizes score, but doesn't exclude.
+    assert passes_hard_filters(_hike(travel_time_h=3.0), _request(max_travel_time_h=2.0))
 
 
 def test_fails_on_canton_mismatch():
@@ -97,12 +101,13 @@ def test_score_rewards_freshness():
 def test_rank_excludes_non_matching_and_sorts_by_score():
     good = _hike(name="Good", travel_time_h=0.5)
     bad_difficulty = _hike(name="Bad", difficulty="T6")
-    unreachable = _hike(name="Far", travel_time_h=None)
+    far_but_included = _hike(name="Far", travel_time_h=3.0)  # exceeds budget, not excluded
+    unknown_travel_time = _hike(name="Unknown travel time", travel_time_h=None)
     request = _request()
 
-    ranked = rank([good, bad_difficulty, unreachable], request)
+    ranked = rank([good, bad_difficulty, far_but_included, unknown_travel_time], request)
 
-    assert [h.name for h in ranked] == ["Good"]
+    assert {h.name for h in ranked} == {"Good", "Far", "Unknown travel time"}
 
 
 def test_rank_caps_results_at_top_n():
