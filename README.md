@@ -33,8 +33,15 @@ backend on port 8000.
 - `GOOGLE_MAPS_API_KEY` — required for geocoding the start address and
   computing travel times. Without it, searches return a clear 400 error
   rather than crashing. Get one at
-  https://console.cloud.google.com/google/maps-apis (enable the Geocoding
-  API and Directions API).
+  https://console.cloud.google.com/google/maps-apis/api-list (that
+  dedicated Maps Platform page is more reliable than searching the generic
+  API Library) and enable:
+  - **Geocoding API** — for the start address.
+  - **Routes API** — for travel time. *Not* "Directions API": Google
+    retired that one for new projects on 2025-03-01 in favor of Routes API,
+    which is what `backend/app/services/travel.py` actually calls (POST
+    `https://routes.googleapis.com/directions/v2:computeRoutes`, not the
+    old GET-based endpoint — a real code change, not just a rename).
 - `SAC_USERNAME` / `SAC_PASSWORD`, `GIPFELBUCH_USERNAME` /
   `GIPFELBUCH_PASSWORD` — your own account credentials for each site (§6).
   Login for both is implemented for real and verified live. See "Known

@@ -8,11 +8,14 @@ from app.models import TransportMode
 
 logger = logging.getLogger(__name__)
 
-DIRECTIONS_URL = "https://maps.googleapis.com/maps/api/directions/json"
+# The legacy Directions API was retired for new projects on 2025-03-01 and
+# replaced by the Routes API — a POST/JSON endpoint, not the old GET one.
+# See https://developers.google.com/maps/documentation/routes/migrate-routes
+ROUTES_URL = "https://routes.googleapis.com/directions/v2:computeRoutes"
 
-_GOOGLE_MODE = {
-    TransportMode.car: "driving",
-    TransportMode.public_transport: "transit",
+_GOOGLE_TRAVEL_MODE = {
+    TransportMode.car: "DRIVE",
+    TransportMode.public_transport: "TRANSIT",
 }
 
 
@@ -34,27 +37,40 @@ async def travel_time(
         logger.info("Skipping travel-time lookup: GOOGLE_MAPS_API_KEY not set")
         return None
 
+    travel_mode = _GOOGLE_TRAVEL_MODE[mode]
+    body = {
+        "origin": {"location": {"latLng": {"latitude": origin[0], "longitude": origin[1]}}},
+        "destination": {
+            "location": {"latLng": {"latitude": destination[0], "longitude": destination[1]}}
+        },
+        "travelMode": travel_mode,
+    }
+    # routingPreference is only valid for DRIVE/TWO_WHEELER, not TRANSIT.
+    if travel_mode == "DRIVE":
+        body["routingPreference"] = "TRAFFIC_AWARE"
+
     async with httpx.AsyncClient(timeout=10) as client:
         try:
-            resp = await client.get(
-                DIRECTIONS_URL,
-                params={
-                    "origin": f"{origin[0]},{origin[1]}",
-                    "destination": f"{destination[0]},{destination[1]}",
-                    "mode": _GOOGLE_MODE[mode],
-                    "key": settings.google_maps_api_key,
+            resp = await client.post(
+                ROUTES_URL,
+                json=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Goog-Api-Key": settings.google_maps_api_key,
+                    "X-Goog-FieldMask": "routes.duration",
                 },
             )
             resp.raise_for_status()
             data = resp.json()
         except (httpx.HTTPError, ValueError) as exc:
-            logger.warning("Directions request failed: %s", exc)
+            logger.warning("Routes API request failed: %s", exc)
             return None
 
-    if data.get("status") != "OK" or not data.get("routes"):
-        logger.info("No route found (%s) for mode=%s", data.get("status"), mode)
+    routes = data.get("routes")
+    if not routes:
+        logger.info("No route found for mode=%s", mode)
         return TravelResult(duration_h=float("inf"), reachable_directly=False)
 
-    leg = data["routes"][0]["legs"][0]
-    duration_h = leg["duration"]["value"] / 3600
+    # Duration comes back as a string like "1234s".
+    duration_h = int(routes[0]["duration"].rstrip("s")) / 3600
     return TravelResult(duration_h=duration_h, reachable_directly=True)
