@@ -48,13 +48,20 @@ This is a v1 build.
 1. **hikr.org scraper** (`backend/app/sources/hikr.py`) — the confirmed,
    public, no-login source. It's a real implementation, built against
    durable URL patterns (`/filter.php`, `/postNNNNN.html`), but hikr.org
-   returns HTTP 403 to automated requests from this environment (bot
-   protection), confirmed both via a research fetch and a live run of the
-   actual aggregator — so the search query params and extraction regexes
-   are unverified against a real response. Run it from a normal residential
-   IP / real browser-like environment, check the logs for "No hikr.org
-   report links found," and adjust `_SEARCH_URL`'s params or the regexes
-   against real page content as needed.
+   blocks this environment: confirmed via `httpx` (403), and again with a
+   **real Chromium browser via Playwright** — not a JS challenge that
+   auto-resolves, but Cloudflare's explicit "Sorry, you have been blocked"
+   WAF page, which typically fires on known datacenter/cloud IP ranges
+   regardless of how browser-like the request looks. Deliberately didn't
+   pursue further (residential proxies, TLS fingerprint spoofing, etc.) —
+   that crosses from "scraper with realistic headers" into actively
+   defeating a security control, which isn't the right call even for
+   legitimate personal use. **The scraper code itself is untested against a
+   real response but should be re-checked from a normal home/residential
+   network** (this sandbox's IP is almost certainly the actual problem, not
+   the code) — check the logs for "No hikr.org report links found" and
+   adjust `_SEARCH_URL`'s params or the regexes against real page content
+   if needed once it's reachable.
 2. **gipfelbuch.ch** (`backend/app/sources/gipfelbuch.py`) — **fully
    working, the one source that reaches end users right now**, verified
    live end-to-end (2026-08-17): real login (the site's own `/meta/login`
@@ -73,46 +80,43 @@ This is a v1 build.
    for gipfelbuch's *paginated* "load more" endpoint (`/routen/list`)
    wasn't captured — only the single-page listing was verified, which
    already returns enough results for v1.
-3. **SAC.ch** (`backend/app/sources/sac.py`) — **login and search both
-   working**, verified live end-to-end. SAC.ch's login is a full OAuth2/OIDC
-   flow through a separate `portal.sac-cas.ch` identity service (fully
-   reverse-engineered). The actual route database isn't on sac-cas.ch at
-   all — it's a separate AngularJS app, "SuisseAlpine", at
-   `www.suissealpine.sac-cas.ch`, with its own public REST API
-   (`GET /api/1/route/search?lang=de&type=mountain_hiking`) that turned out
-   not to need authentication at all (confirmed: identical results logged
-   in or not — the sac-cas.ch session cookie doesn't even apply to that
-   domain). A live search returned 25 real routes with real SAC T-grades
-   during testing. What's *not* wired up yet: that search endpoint only
-   returns name/T-grade/id, not duration, elevation, circularity, or a GPX
-   link — those fields are left blank for SAC-sourced hikes. A second,
-   thorough pass specifically hunting for that fuller detail endpoint ruled
-   out every plausible REST shape (`/route/{id}`, `/routes/{id}`,
-   `/document(s)/{id}`, geometry/locale sub-paths, extra query params on
-   `/route/search`) and a promising-looking `Vary: Session-Id,X-API-Key`
-   response header that turned out to be generic API-gateway boilerplate,
-   not something the app itself sends (neither string appears anywhere in
-   its JS). The app's edit-form templates *do* reference the right
-   underlying fields (`ascent_time_min/max`, `descent_time_min/max`,
-   `ascent_altitude`, `descent_altitude`), confirming the data exists
-   server-side — it's just not reachable via any HTTP request replay found
-   so far. Cracking it likely needs real browser DevTools (or a headless
-   browser) to see what the *actual running* Angular app requests when you
-   open a specific route's page — something a plain HTTP client can't
-   fake, since it requires executing the app's JS. Full trail documented in
-   `sac.py`'s module docstring for whoever picks this up next. Also still
-   open: whether the separate paid "SAC-Tourenportal Abonnement" advertised
-   on sac-cas.ch gates anything beyond what's already working — worth
-   checking on your account.
+3. **SAC.ch** (`backend/app/sources/sac.py`) — **fully working, real
+   technical data included**, verified live end-to-end (2026-08-17). Login
+   is a full OAuth2/OIDC flow through a separate `portal.sac-cas.ch`
+   identity service (fully reverse-engineered). The route database is a
+   white-labeled deployment of the open-source **Camptocamp/c2corg
+   platform** ("SuisseAlpine"); an earlier pass had settled for its
+   `/api/1/route/search` endpoint, which only returns name/id/T-grade — no
+   duration or elevation. That turned out to be the wrong endpoint, found
+   by driving a real, logged-in browser session with Playwright against
+   `https://www.sac-cas.ch/de/huetten-und-touren/sac-tourenportal` (a
+   different, working entry point than the standalone `#!/...` SPA, which
+   *is* gated behind a paid "Tourenportal-Abonnement" this account doesn't
+   have — a real dead end, documented in `sac.py`'s git history, not
+   pursued further). That page calls a richer, also-anonymous endpoint:
 
-   Practically, this means SAC.ch candidates don't show up in results yet:
-   `services/ranking.py`'s hard filter requires a known duration to verify
-   the "hike length ≈ requested" constraint (the same "exclude, don't
-   guess" rule already applied to unknown travel time and ungeocodable
-   trailheads), and SAC hikes have no duration data. The source stays
-   wired in — no reason to rip it out, login costs nothing to keep — and
-   it'll start contributing real results automatically the moment the
-   detail endpoint above is found, with no other code changes needed.
+   ```
+   GET https://www.suissealpine.sac-cas.ch/api/1/poi/search
+       ?lang=de&output_lang=de&disciplines=mountain_hiking&hut_type=all
+       &mode=per_discipline&limit=N
+   ```
+
+   Each result is a POI (hut/summit/etc.) carrying a nested `routes` array
+   — the real approach routes to reach it, each with genuine
+   `ascent_time_min/max` + `descent_time_min/max` (minutes, → duration),
+   `ascent_altitude`/`descent_altitude` (meters), and `main_difficulty`
+   (T-grade). A live search returned 41 candidates, all with real duration
+   data, and 11 of them survived the app's full filter/rank pipeline for a
+   sample query. The permalink pattern
+   (`https://www.sac-cas.ch/de/huetten-und-touren/sac-tourenportal/{poi_id}`)
+   was confirmed by clicking through the real UI, not guessed — one honest
+   imprecision: it points at the destination POI, not at the one specific
+   approach route among possibly several, since no per-route permalink was
+   found. Still not wired up: circularity, climbing-section grades, and a
+   GPX download link — the real UI has a "GPX-Datei herunterladen" button,
+   but the request it fires wasn't captured this pass; a follow-up
+   Playwright session (click that button, capture the request) would find
+   it the same way the `poi/search` endpoint was found.
 4. **"Other sources" fallback** (§4.2 step 4) — intentionally a no-op per
    §6 ("no general web search API assumed"). Plug in a SERP API key or a
    specific fallback site here if needed.

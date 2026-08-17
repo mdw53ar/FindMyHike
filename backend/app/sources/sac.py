@@ -24,82 +24,52 @@ POST:
 4. The final authenticated page contains an `oidc/logout` link with a live
    `id_token_hint` — that's the "am I logged in" signal used below.
 
-**Tour search is partially implemented**, verified live (2026-08-17). The
-actual route database isn't on `www.sac-cas.ch` at all (that's mostly
-marketing content) — it's a separate AngularJS single-page app,
-"SuisseAlpine", at `www.suissealpine.sac-cas.ch`, talking to its own REST
-API at `www.suissealpine.sac-cas.ch/api/1/...`. That API turned out to be
-**public/unauthenticated for search** — `www.sac-cas.ch`'s login cookie
-doesn't even carry over to that domain, and anonymous requests return the
-identical data authenticated ones do (tested both ways). Confirmed working:
+**Tour search is fully implemented with real technical data**, found by
+driving a real, logged-in browser session with Playwright against
+`https://www.sac-cas.ch/de/huetten-und-touren/sac-tourenportal` — a
+different, working entry point than the standalone
+`www.suissealpine.sac-cas.ch` Angular SPA (`#!/...`), which turned out to
+be gated behind "You do not have permission to access this site" for
+this account (almost certainly the separate paid "Tourenportal
+Abonnement" — a real dead end, not a bug, documented in git history for
+this file). This embedded widget on sac-cas.ch itself isn't gated the same
+way, and — crucially — it calls a *different, richer* API than the
+`/route/search` endpoint an earlier pass had settled for:
 
-    GET /api/1/route/search?lang=de&type=mountain_hiking&limit=N&offset=N
+    GET https://www.suissealpine.sac-cas.ch/api/1/poi/search
+        ?lang=de&output_lang=de&order_by=-first_time_published
+        &disciplines=mountain_hiking&hut_type=all&mode=per_discipline&limit=N
 
-- `type` is a Postgres enum (`discipline`); `mountain_hiking` is the one
-  that carries the SAC T-grade scale this app filters by. Other valid
-  values seen: `alpine_tour`, `alpine_climbing`, `ski_tour`,
-  `snowshoe_tour`, `via_ferrata` (an invalid value 400s with a raw SQL
-  error that conveniently reveals the enum name — that's how these were
-  found).
-- Response shape: `{"results": [...], "cursor": <next offset>}`. Each
-  result has `id`, `title` (dict keyed by language, e.g. `{"de": "..."}`),
-  `main_difficulty` (the real SAC T-grade, e.g. `"T4"`, or `None`),
-  `destination_poi.regions_denormalization` (dict keyed by language, e.g.
-  `{"de": "Berner Alpen", ...}` — a region name, not one of the 26
-  cantons), `availability` (seen: `"limited"` — unclear if this reflects
-  the "Tourenportal-Abonnement" gate mentioned on sac-cas.ch, or something
-  else; worth revisiting), and `gis_geometry_ok` (bool — hints at whether
-  GPX/track geometry exists, though the geometry itself isn't in this
-  payload).
-- **Not found in this pass**: duration, elevation gain/loss, circularity,
-  or a GPX download link. Those aren't in the search/listing payload above
-  — `/api/1/route/{id}` only allows `DELETE, OPTIONS` (not a read
-  endpoint), and no other detail endpoint was located. A route's public
-  page is assumed to be `https://www.suissealpine.sac-cas.ch/#!/route/{id}`
-  (the app's Angular hashbang convention; a 200 was confirmed for that URL
-  shape, but since the server can't see the `#!...` fragment, that only
-  proves the SPA shell loads, not that the specific route renders).
+This is public/unauthenticated (verified: identical response with or
+without login) and returns POIs — huts, summits, etc. — each carrying a
+nested `routes` array: the actual approach routes to reach that
+destination, WITH the technical data the old endpoint lacked:
+`ascent_time_min`/`ascent_time_max` (minutes), `descent_time_min`/
+`descent_time_max` (minutes), `ascent_altitude`/`descent_altitude`
+(meters), `main_difficulty` (SAC T-grade), `discipline`, `title` (e.g.
+"Von Miralago" — an approach description, not a standalone hike name; hike
+names are built as `f"{poi_name}: {route_title}"`), and per-route `id`.
+`availability` is still often `"limited"` per route even on these fully
+populated entries — that field doesn't gate this data the way it seemed to
+on the old endpoint; it likely governs something else (comment/photo
+visibility, maybe).
 
-A second, more thorough pass (2026-08-17) specifically hunting for the
-technical-detail endpoint came up empty, and ruled out several plausible
-leads rather than just giving up early:
-- The Angular edit/view templates *do* reference the right field names
-  (`route.ascent_time_min`/`ascent_time_max`, `descent_time_min`/
-  `descent_time_max`, `ascent_altitude`, `descent_altitude`, a
-  "+ Upload GPX/KML" widget) — so a fuller document with this data
-  definitely exists server-side, it's just not reachable through anything
-  found so far.
-- Every plausible REST shape for fetching one route was tried and 404s or
-  405s: `/route/{id}` (405, `Allow: DELETE, OPTIONS` — genuinely no GET
-  handler registered, not a permissions issue), `/routes/{id}`, `/document/
-  {id}`, `/documents/{id}`, `/route/{id}/geometry`, `/route/{id}/locales`,
-  `/route/{id}/de`, `/geometry/{id}`, `/api/2/...`. Extra query params on
-  the working `/route/search` endpoint (`extended`, `full`, `fields=all`,
-  `format=full`, `detail=full`, `expand`) were all silently ignored —
-  doesn't unlock more fields.
-- `/route/search`'s response carries a `Vary: Session-Id,X-API-Key,Origin`
-  header, which looked promising (an auth mechanism not yet tried), but
-  neither `Session-Id` nor `X-API-Key` appears anywhere in either JS bundle
-  (`loadApp.js`, `dependencies.js`), and the same Vary header shows up on
-  `/poi/search` too — this is almost certainly generic API-gateway/cache
-  config, not something this specific frontend actually sends. Ruled out,
-  not just unexplored.
-- No `client_id`, `oauth`, or `portal.sac-cas.ch` reference exists anywhere
-  in the app's JS either, so (unlike `www.sac-cas.ch`) this app doesn't
-  appear to run its own separate OAuth handshake — the "how does the
-  logged-in web app get more data than this" question is still open.
+The permalink for a destination POI (confirmed by clicking through the
+real UI, not guessed) is:
 
-Realistically, the remaining lead can't be resolved by replaying HTTP
-requests with curl/httpx — it needs to see what the *actual, running*
-Angular app requests when you open a specific route's detail page (e.g.
-https://www.suissealpine.sac-cas.ch/#!/route/4523), since that call isn't
-one of the URL shapes above. That means either real browser DevTools
-(Network tab, filter by XHR, click a route on the real site) or driving a
-headless browser (Playwright) against the real app and capturing its
-traffic — both need actual JS execution, which a plain HTTP client can't
-fake here. Once that request is known, fill in `length_h` /
-`elevation_gain_m` / `elevation_loss_m` / `circular` / `gpx_url` on
-`RawHike` in `_search` below (currently left `None`).
+    https://www.sac-cas.ch/de/huetten-und-touren/sac-tourenportal/{poi_id}
+
+— it points at the destination (a hut/summit can have several approach
+routes), not at one specific route within it, which is a real but minor
+imprecision worth knowing about.
+
+Not carried over from this endpoint: circularity, climbing-section
+grades, and a GPX download link — the real UI does have a
+"GPX-Datei herunterladen" (download GPX) button, but the request it fires
+wasn't captured in this pass. `RawHike.circular`, `.climbing_required/
+_grade`, and `.gpx_url` are left unset for SAC-sourced hikes; a follow-up
+Playwright pass (click the GPX button, capture the request) would find it
+the same way this endpoint was found.
 """
 
 import html
@@ -124,9 +94,12 @@ _HOME_URL = f"{BASE_URL}/de/"
 _SIGNIN_URL_RE = re.compile(r'href="(https://www\.sac-cas\.ch/de/login/\?[^"]*)"')
 
 _TOURENPORTAL_URL = "https://www.suissealpine.sac-cas.ch"
-_ROUTE_SEARCH_URL = f"{_TOURENPORTAL_URL}/api/1/route/search"
-_ROUTE_DETAIL_URL_TEMPLATE = f"{_TOURENPORTAL_URL}/#!/route/{{id}}"
-_ROUTE_PAGE_SIZE = 25
+_POI_SEARCH_URL = f"{_TOURENPORTAL_URL}/api/1/poi/search"
+_POI_DETAIL_URL_TEMPLATE = f"{BASE_URL}/de/huetten-und-touren/sac-tourenportal/{{poi_id}}"
+_POI_PAGE_SIZE = 25
+# The discipline that carries SAC's T-grade (hiking) scale, which is what
+# this app filters by — other values seen: alpine_tour, ski_tour, etc.
+_ROUTE_DISCIPLINE = "mountain_hiking"
 
 _HEADERS = {
     "User-Agent": (
@@ -244,49 +217,66 @@ class SacSource(HikeSource):
     async def _search(
         self, client: httpx.AsyncClient, criteria: SearchRequest
     ) -> list[RawHike]:
-        # The SuisseAlpine route-search API is public (verified: identical
-        # results with or without the www.sac-cas.ch login cookie, which
-        # doesn't even apply to this domain) — see module docstring.
-        # "mountain_hiking" is the discipline that carries SAC's T-grade
-        # scale, which is what this app filters by.
+        # Public/unauthenticated (verified: identical response logged in or
+        # not) — see module docstring. Each POI (hut/summit/etc.) carries a
+        # nested `routes` array of approach routes, which is where the real
+        # technical data (duration, elevation) actually lives — the
+        # single-discipline query still returns POIs whose *other* routes
+        # cover different disciplines, so `_ROUTE_DISCIPLINE` is filtered
+        # again per-route below rather than trusted from the query alone.
         try:
             resp = await client.get(
-                _ROUTE_SEARCH_URL,
+                _POI_SEARCH_URL,
                 params={
                     "lang": "de",
-                    "type": "mountain_hiking",
-                    "limit": _ROUTE_PAGE_SIZE,
-                    "offset": 0,
+                    "output_lang": "de",
+                    "order_by": "-first_time_published",
+                    "disciplines": _ROUTE_DISCIPLINE,
+                    "hut_type": "all",
+                    "mode": "per_discipline",
+                    "limit": _POI_PAGE_SIZE,
                 },
             )
             resp.raise_for_status()
             data = resp.json()
         except (httpx.HTTPError, ValueError) as exc:
-            logger.warning("SAC.ch route search failed: %s", exc)
+            logger.warning("SAC.ch POI search failed: %s", exc)
             return []
 
         results: list[RawHike] = []
-        for item in data.get("results", []):
-            title = (item.get("title") or {}).get("de")
-            item_id = item.get("id")
-            if not title or item_id is None:
+        for poi in data.get("results", []):
+            poi_id = poi.get("id")
+            poi_name = poi.get("display_name")
+            if poi_id is None or not poi_name:
                 continue
 
+            source_url = _POI_DETAIL_URL_TEMPLATE.format(poi_id=poi_id)
             # Region names here (e.g. "Berner Alpen") are alpine/geographic
             # regions, not one of the 26 political cantons this app filters
             # by, and no reliable mapping between the two was established —
             # left unset rather than guessed, per the same principle applied
             # to cable car hours (see services/cableways.py).
-            results.append(
-                RawHike(
-                    name=title,
-                    source_name="SAC.ch",
-                    source_url=_ROUTE_DETAIL_URL_TEMPLATE.format(id=item_id),
-                    canton=None,
-                    difficulty=item.get("main_difficulty"),
-                    raw_text=title,
+            canton = None
+
+            for route in poi.get("routes") or []:
+                if route.get("discipline") != _ROUTE_DISCIPLINE:
+                    continue
+                route_title = route.get("title")
+                name = f"{poi_name}: {route_title}" if route_title else poi_name
+
+                results.append(
+                    RawHike(
+                        name=name,
+                        source_name="SAC.ch",
+                        source_url=source_url,
+                        canton=canton,
+                        difficulty=route.get("main_difficulty"),
+                        length_h=_route_duration_h(route),
+                        elevation_gain_m=route.get("ascent_altitude"),
+                        elevation_loss_m=route.get("descent_altitude"),
+                        raw_text=name,
+                    )
                 )
-            )
         return results
 
     def _load_cached_cookies(self) -> dict | None:
@@ -302,3 +292,14 @@ class SacSource(HikeSource):
             _SESSION_FILE.write_text(json.dumps(cookies), encoding="utf-8")
         except OSError:
             logger.warning("Could not persist SAC.ch session cookies to %s", _SESSION_FILE)
+
+
+def _route_duration_h(route: dict) -> float | None:
+    """Round-trip duration estimate: ascent + descent time, each in minutes
+    (only the ascent leg is always populated — many routes have no descent
+    time recorded, in which case this falls back to ascent-only, an
+    underestimate for anything but a one-way approach)."""
+    ascent = route.get("ascent_time_max") or route.get("ascent_time_min")
+    descent = route.get("descent_time_max") or route.get("descent_time_min")
+    minutes = (ascent or 0) + (descent or 0)
+    return minutes / 60 if minutes else None
