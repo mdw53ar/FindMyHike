@@ -63,13 +63,22 @@ real UI, not guessed) is:
 routes), not at one specific route within it, which is a real but minor
 imprecision worth knowing about.
 
-Not carried over from this endpoint: circularity, climbing-section
-grades, and a GPX download link — the real UI does have a
-"GPX-Datei herunterladen" (download GPX) button, but the request it fires
-wasn't captured in this pass. `RawHike.circular`, `.climbing_required/
-_grade`, and `.gpx_url` are left unset for SAC-sourced hikes; a follow-up
-Playwright pass (click the GPX button, capture the request) would find it
-the same way this endpoint was found.
+Not carried over from this endpoint: circularity, climbing-section grades,
+and a GPX download link. Circularity/climbing grades simply aren't in the
+`poi/search` payload. GPX was investigated further (2026-08-17, same
+Playwright approach): the "GPX-Datei herunterladen" button on a route's
+detail page stays `disabled` even after selecting a specific route (tried
+one with `gis_geometry_ok: true` too — no difference), and turns out to
+belong to a *different* tool entirely — its own section header reads
+"Eigene Route zeichnen" ("draw your own route"). It's for exporting a
+route the user hand-draws on the map, not for downloading an official
+route's pre-recorded track. `gis_geometry_ok` appears to mean "we have
+geometry to render on the map," not "geometry available for export" — no
+official-route GPX export was found in this UI at all; it may simply not
+exist as a feature, or it may be reachable only through the
+subscription-gated standalone SPA (see the earlier "You do not have
+permission" finding above). `RawHike.circular`, `.climbing_required/
+_grade`, and `.gpx_url` are left unset for SAC-sourced hikes.
 """
 
 import html
