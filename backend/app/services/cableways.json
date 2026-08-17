@@ -1,0 +1,72 @@
+{
+  "schilthornbahn": {
+    "name": "Schilthornbahn",
+    "opening_hours": "typically 06:25-16:50 (varies by season, first/last ascent times)",
+    "season": "year-round",
+    "selbstbedienung": false,
+    "note": "Verify current timetable at schilthorn.ch before relying on off-hours access."
+  },
+  "jungfraubahn": {
+    "name": "Jungfraubahn",
+    "opening_hours": "typically 06:35-18:00 (seasonal)",
+    "season": "year-round",
+    "selbstbedienung": false,
+    "note": "Verify current timetable at jungfrau.ch."
+  },
+  "klein matterhorn": {
+    "name": "Matterhorn Glacier Paradise (Klein Matterhorn)",
+    "opening_hours": "typically 08:20-15:20 (seasonal)",
+    "season": "year-round",
+    "selbstbedienung": false,
+    "note": "Verify current timetable at matterhornparadise.ch."
+  },
+  "titlis rotair": {
+    "name": "Titlis Rotair",
+    "opening_hours": "typically 08:30-16:00 (seasonal)",
+    "season": "year-round",
+    "selbstbedienung": false,
+    "note": "Verify current timetable at titlis.ch."
+  },
+  "stanserhorn-bahn": {
+    "name": "Stanserhorn-Bahn (CabriO)",
+    "opening_hours": "typically 08:00-17:00, closed in winter (roughly Nov-Apr)",
+    "season": "spring-autumn",
+    "selbstbedienung": false,
+    "note": "Verify current timetable at stanserhorn.ch; closed part of the year."
+  },
+  "niederhorn": {
+    "name": "Niederhornbahn",
+    "opening_hours": "typically 08:00-17:30 (seasonal)",
+    "season": "year-round (weather-dependent)",
+    "selbstbedienung": false,
+    "note": "Verify current timetable at niederhorn.ch."
+  },
+  "pilatusbahn": {
+    "name": "Pilatusbahn",
+    "opening_hours": "typically 08:30-17:00 (seasonal, cogwheel railway closed in winter)",
+    "season": "spring-autumn (cogwheel); cable car partly year-round",
+    "selbstbedienung": false,
+    "note": "Verify current timetable at pilatus.ch."
+  },
+  "rigi bahnen": {
+    "name": "Rigi Bahnen",
+    "opening_hours": "typically 06:00-21:00 (seasonal, some late trains for sunrise/sunset hikes)",
+    "season": "year-round",
+    "selbstbedienung": false,
+    "note": "Verify current timetable at rigi.ch."
+  },
+  "saentisbahn": {
+    "name": "Säntisbahn",
+    "opening_hours": "typically 08:00-17:00 (seasonal)",
+    "season": "year-round (weather-dependent)",
+    "selbstbedienung": false,
+    "note": "Verify current timetable at saentisbahn.ch."
+  },
+  "first bahn": {
+    "name": "Firstbahn (Grindelwald-First)",
+    "opening_hours": "typically 08:00-17:30 (seasonal)",
+    "season": "spring-autumn",
+    "selbstbedienung": false,
+    "note": "Verify current timetable at jungfrau.ch/grindelwald-first."
+  }
+}
